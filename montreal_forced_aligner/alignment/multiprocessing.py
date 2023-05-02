@@ -935,6 +935,34 @@ class AlignFunction(KaldiFunction):
                     )
                     process_stream = align_proc.stderr
                 else:
+                    # added for generating full lattice
+                    # but keep everything else the same
+                    print("Generating lattice")
+                    lat_path = job.construct_path(
+                        workflow.working_directory, "lat", "ark", dict_id
+                    )
+                    com_latgen = [
+                        thirdparty_binary("gmm-latgen-faster"),
+                        f"--acoustic-scale={self.align_options['acoustic_scale']}",
+                        f"--beam={self.align_options['beam']}",
+                        f"--max-active={self.align_options.get('max_active', 2500)}",
+                        f"--lattice-beam={self.align_options.get('lattice_beam', 6)}",
+                        f"--word-symbol-table={word_symbols_path}",
+                        "--allow-partial=true",
+                        "--determinize-lattice=false",
+                        self.model_path,
+                        f"ark,s,cs:{fst_path}",
+                        feature_string,
+                        f"ark:{lat_path}",
+                    ]
+                    latgen_proc = subprocess.Popen(
+                        com_latgen, 
+                        stderr=log_file, 
+                        env=os.environ, 
+                        encoding="utf8"
+                    )
+                    
+
                     com = [
                         thirdparty_binary("gmm-align-compiled"),
                         f"--transition-scale={self.align_options['transition_scale']}",

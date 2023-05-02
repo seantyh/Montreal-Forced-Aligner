@@ -99,7 +99,7 @@ class ExitHooks(object):
 
 @click.group(
     name="mfa",
-    help="Montreal Forced Aligner is a command line utility for aligning speech and text.",
+    help="Montreal Forced Aligner is a command line utility for aligning speech and text. (seantyh fork)",
 )
 @click.pass_context
 def mfa_cli(ctx: click.Context) -> None:
