@@ -935,33 +935,10 @@ class AlignFunction(KaldiFunction):
                     )
                     process_stream = align_proc.stderr
                 else:
-                    # added for generating full lattice
-                    # but keep everything else the same
-                    print("Generating lattice")
-                    lat_path = job.construct_path(
-                        workflow.working_directory, "lat", "ark", dict_id
-                    )
-                    com_latgen = [
-                        thirdparty_binary("gmm-latgen-faster"),
-                        f"--acoustic-scale={self.align_options['acoustic_scale']}",
-                        f"--beam={self.align_options['beam']}",
-                        f"--max-active={self.align_options.get('max_active', 2500)}",
-                        f"--lattice-beam={self.align_options.get('lattice_beam', 6)}",
-                        f"--word-symbol-table={word_symbols_path}",
-                        "--allow-partial=true",
-                        "--determinize-lattice=false",
-                        self.model_path,
-                        f"ark,s,cs:{fst_path}",
-                        feature_string,
-                        f"ark:{lat_path}",
-                    ]
-                    latgen_proc = subprocess.Popen(
-                        com_latgen, 
-                        stderr=log_file, 
-                        env=os.environ, 
-                        encoding="utf8"
-                    )
                     
+                    boost_model_path = job.construct_path(
+                        workflow.working_directory, "boost", "mdl", dict_id
+                    )
 
                     com = [
                         thirdparty_binary("gmm-align-compiled"),
@@ -972,12 +949,13 @@ class AlignFunction(KaldiFunction):
                         f"--retry-beam={self.align_options['retry_beam']}",
                         "--careful=false",
                         f"--write-per-frame-acoustic-loglikes=ark:{like_path}",
-                        "-",
+                        boost_model_path,
                         f"ark,s,cs:{fst_path}",
                         feature_string,
                         f"ark:{ali_path}",
                         "ark,t:-",
                     ]
+
 
                     boost_proc = subprocess.Popen(
                         [
@@ -985,21 +963,81 @@ class AlignFunction(KaldiFunction):
                             f"--boost={self.align_options['boost_silence']}",
                             self.align_options["optional_silence_csl"],
                             self.model_path,
-                            "-",
+                            boost_model_path,
                         ],
                         stderr=log_file,
-                        stdout=subprocess.PIPE,
                         env=os.environ,
                     )
+
+                    # the following three steps depend on boost_model
+                    # wait till it finishes
+                    boost_proc.wait()
+
+                    # added for generating full lattice
+                    # but keep everything else the same
+                    print("Generating lattice")
+                    lat_path = job.construct_path(
+                        workflow.working_directory, "lat", "ark", dict_id
+                    )
+
+                    gmmlik_path = job.construct_path(
+                        workflow.working_directory, "gmmlik", "ark", dict_id
+                    )
+
+                    log_file.write("Feature string: \n" + feature_string + "\n")
+                    
+                    com_latgen = [
+                        thirdparty_binary("gmm-latgen-faster"),
+                        f"--acoustic-scale={self.align_options['acoustic_scale']}",
+                        f"--beam={self.align_options['beam']}",
+                        f"--max-active={self.align_options.get('max_active', 2500)}",
+                        f"--lattice-beam={self.align_options.get('lattice_beam', 6)}",
+                        f"--word-symbol-table={word_symbols_path}",
+                        "--allow-partial=true",
+                        "--determinize-lattice=false",
+                        boost_model_path,
+                        f"ark,s,cs:{fst_path}",
+                        feature_string,
+                        f"ark:{lat_path}",
+                    ]
+
+                    latgen_proc = subprocess.Popen(
+                        com_latgen, 
+                        stderr=log_file, 
+                        env=os.environ, 
+                        encoding="utf8",
+                    )
+                    # latgen and gmmlik all read from boost_model_path
+                    # although it might not matter, let's do it one by one.
+                    latgen_proc.wait()
+                    
+                    com_gmmlik = [
+                        thirdparty_binary("gmm-compute-likes"),
+                        boost_model_path,
+                        feature_string,
+                        f"ark:{gmmlik_path}",
+                    ]
+                    
+                    # comment out for now. This step takes too long.
+                    # gmmlik_proc = subprocess.Popen(
+                    #     com_gmmlik,
+                    #     stderr=log_file,
+                    #     env=os.environ,
+                    #     encoding="utf8",
+                    # )
+                    # gmmlik_proc.wait()
+
                     align_proc = subprocess.Popen(
                         com,
                         stdout=subprocess.PIPE,
                         stderr=log_file,
                         encoding="utf8",
-                        stdin=boost_proc.stdout,
                         env=os.environ,
                     )
+
+
                     process_stream = align_proc.stdout
+
                 no_feature_count = 0
                 for line in process_stream:
                     if re.search("No features for utterance", line):
